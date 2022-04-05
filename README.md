@@ -1,4 +1,4 @@
-# STM32_PDM-to-DAC
+# STM32 PDM to DAC pin of an MCU
 
 ## Purpose of Project
 
