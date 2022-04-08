@@ -6,6 +6,12 @@ Learn how to:
 1. Output the PDM processed data to DAC pin of an MCU
 2. TBD
 
+
+## Steps  
+1. PDM data to PCM to DAC one time single PDM data  
+2. PDM data to PCM to DAC continous data update of PDM data  
+3. PDM data from SPI  
+
 This project is preceded by 
 1. Interfacing the PDM microphone to an SPI interface of an MCU https://github.com/VictorTagayun/STM32_SPI-Master-RX-DMA_SingleBoard and 
 2. Processing PDM data to PCM https://github.com/VictorTagayun/STM32_PDM-to-PCM-Processing
