@@ -51,19 +51,16 @@ DMA_HandleTypeDef hdma_dac1;
 
 SPI_HandleTypeDef hspi1;
 SPI_HandleTypeDef hspi2;
+DMA_HandleTypeDef hdma_spi1_tx;
+DMA_HandleTypeDef hdma_spi2_rx;
 
-TIM_HandleTypeDef htim6;
+TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
-uint8_t send_data2[30] = "SPI buffer test";
-uint8_t receive_data2[1000];
-uint8_t PDM_receive_data[2000];
-
-uint8_t send_data1[30] = "SPI buffer test";
-uint8_t receive_data1[30];
+uint8_t SPI_PDM_rx_data_4k[4000], SPI_PDM_tx_data_4k[4000];
 
 int16_t PCM_outBuffer[500];
 uint16_t PCM_DAC_outBuffer[500];
@@ -77,9 +74,9 @@ static void MX_USART2_UART_Init(void);
 static void MX_DMA_Init(void);
 static void MX_CRC_Init(void);
 static void MX_DAC_Init(void);
-static void MX_TIM6_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_SPI2_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 #define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
@@ -124,17 +121,17 @@ int main(void)
   MX_CRC_Init();
   MX_PDM2PCM_Init();
   MX_DAC_Init();
-  MX_TIM6_Init();
   MX_SPI1_Init();
   MX_SPI2_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 
-	printf("Starting >> STM32F407G-DISC1_Continous-PDM-data_to_MCU-DAC-Pin_DMA \n");
+	printf("Starting >> STM32F407G-DISC1_SPI-Continous-PDM-data_to_MCU-DAC-Pin_DMA \n");
 
 
 	// first bit to MSB - 8bit tone "AA"
 	for (uint16_t i = 0; i < sizeof(tone500HzA4_pdmdata) * 4; i++) {
-		pdmBuffer8_8000bits_1000bytes_1[i >> 3] = 0x55;
+		pdmBuffer8_8000bits_1000bytes_1[i >> 3] = 0xAA;
 		//		printf("i = %d,  i >>3 = %d, i mod sizeof(tone500HzA4_pdmdata) = %d \n",i, i >>3, i % sizeof(tone500HzA4_pdmdata));
 	}
 
@@ -166,25 +163,32 @@ int main(void)
 		pdmBuffer8_8000bits_4000bytes[i + 3000] = pdmBuffer8_8000bits_1000bytes_3[i]; // tone500HzA4_pdmdata
 	}
 
-	GPIOD->BSRR = (1 << 15); // Set
-	PDM_Filter(&pdmBuffer8_8000bits_4000bytes[0], &PCM_outBuffer[0], &PDM1_filter_handler); // 2000bytes x 8bit/bytes = 16,000 bit / 64 decimate = 250 int of data
-	GPIOD->BSRR = (1 << (15 + 16)); // Reset
+	for (uint16_t i = 0; i < 4000; i++) {
+		SPI_PDM_rx_data_4k[i] = pdmBuffer8_8000bits_4000bytes[i]; // tone500HzA4_pdmdata
+	}
 
-	GPIOD->BSRR = (1 << 15); // Set
-	PDM_Filter(&pdmBuffer8_8000bits_4000bytes[2000], &PCM_outBuffer[250], &PDM1_filter_handler); // 2000bytes x 8bit/bytes = 16,000 bit / 64 decimate = 250 int of data
-	GPIOD->BSRR = (1 << (15 + 16)); // Reset
+//	GPIOD->BSRR = (1 << 15); // Set
+//	PDM_Filter(&pdmBuffer8_8000bits_4000bytes[0], &PCM_outBuffer[0], &PDM1_filter_handler); // 2000bytes x 8bit/bytes = 16,000 bit / 64 decimate = 250 int of data
+//	GPIOD->BSRR = (1 << (15 + 16)); // Reset
+//
+//	GPIOD->BSRR = (1 << 15); // Set
+//	PDM_Filter(&pdmBuffer8_8000bits_4000bytes[2000], &PCM_outBuffer[250], &PDM1_filter_handler); // 2000bytes x 8bit/bytes = 16,000 bit / 64 decimate = 250 int of data
+//	GPIOD->BSRR = (1 << (15 + 16)); // Reset
 
 	for (int cntr = 0; cntr < 500; cntr++) { // 4000bytes x 8bit/bytes = 32,000 bit / 64 decimate = 500 int of data
 		PCM_DAC_outBuffer[cntr] = (PCM_outBuffer[cntr] >> 4) + 2048; // convert to 12bit DC offset of DAC data
 	}
 
+	HAL_SPI_Transmit_DMA(&hspi1, SPI_PDM_rx_data_4k, 4000);
+	HAL_SPI_Receive_DMA(&hspi2, SPI_PDM_rx_data_4k, 4000);
+
 	HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*) PCM_DAC_outBuffer, 500, DAC_ALIGN_12B_R); // 4000bytes x 8bit/bytes = 32,000 bit / 64 decimate = 500 int of data
 
-	HAL_TIM_Base_Start_IT(&htim6); //Start the timer
+	HAL_TIM_Base_Start(&htim2); //Start the timer
 
 	HAL_Delay(100);
 
-	printf("Ending   >> STM32F407G-DISC1_Continous-PDM-data_to_MCU-DAC-Pin_DMA \n");
+	printf("Ending   >> STM32F407G-DISC1_SPI-Continous-PDM-data_to_MCU-DAC-Pin_DMA \n");
 
   /* USER CODE END 2 */
 
@@ -298,7 +302,7 @@ static void MX_DAC_Init(void)
 
   /** DAC channel OUT1 config
   */
-  sConfig.DAC_Trigger = DAC_TRIGGER_T6_TRGO;
+  sConfig.DAC_Trigger = DAC_TRIGGER_T2_TRGO;
   sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
   if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_1) != HAL_OK)
   {
@@ -386,40 +390,47 @@ static void MX_SPI2_Init(void)
 }
 
 /**
-  * @brief TIM6 Initialization Function
+  * @brief TIM2 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_TIM6_Init(void)
+static void MX_TIM2_Init(void)
 {
 
-  /* USER CODE BEGIN TIM6_Init 0 */
+  /* USER CODE BEGIN TIM2_Init 0 */
 
-  /* USER CODE END TIM6_Init 0 */
+  /* USER CODE END TIM2_Init 0 */
 
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
-  /* USER CODE BEGIN TIM6_Init 1 */
+  /* USER CODE BEGIN TIM2_Init 1 */
 
-  /* USER CODE END TIM6_Init 1 */
-  htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 16-1;
-  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 64-1;
-  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
-  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 16-1;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 64-1;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
   {
     Error_Handler();
   }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN TIM6_Init 2 */
+  /* USER CODE BEGIN TIM2_Init 2 */
 
-  /* USER CODE END TIM6_Init 2 */
+  /* USER CODE END TIM2_Init 2 */
 
 }
 
@@ -464,11 +475,18 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA1_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream3_IRQn);
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+  /* DMA2_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
 
 }
 
@@ -489,10 +507,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13|GPIO_PIN_15, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PD13 PD15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_15;
+  /*Configure GPIO pins : PD12 PD13 PD14 PD15 */
+  GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -510,7 +528,7 @@ PUTCHAR_PROTOTYPE {
 	return ch;
 }
 
-void HAL_TIM_TriggerCallback(TIM_HandleTypeDef *htim)
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* Prevent unused argument(s) compilation warning */
   UNUSED(htim);
@@ -519,23 +537,86 @@ void HAL_TIM_TriggerCallback(TIM_HandleTypeDef *htim)
             the HAL_TIM_TriggerCallback could be implemented in the user file
    */
 
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, SET);
+  HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_13);
+
+//  if ((timerPeriodElapsedCallbk_cntr % 2) == 0)
+//  {
+//	  GPIOD->BSRR = (1 << 14); // Set
+//	  PDM_Filter(&pdmBuffer8_8000bits_4000bytes[0], &PCM_outBuffer[0], &PDM1_filter_handler); // 2000bytes x 8bit/bytes = 16,000 bit / 64 decimate = 250 int of data
+//
+//	  for (int cntr = 0; cntr < 250; cntr++) { // 4000bytes x 8bit/bytes = 32,000 bit / 64 decimate = 500 int of data
+//			PCM_DAC_outBuffer[cntr] = (PCM_outBuffer[cntr] >> 4) + 2048; // convert to 12bit DC offset of DAC data
+//	  }
+//	  GPIOD->BSRR = (1 << (14 + 16)); // Reset
+//  } else
+//  {
+//	  GPIOD->BSRR = (1 << 15); // Set
+//	  PDM_Filter(&pdmBuffer8_8000bits_4000bytes[2000], &PCM_outBuffer[250], &PDM1_filter_handler); // 2000bytes x 8bit/bytes = 16,000 bit / 64 decimate = 250 int of data
+//
+//	  for (int cntr = 250; cntr < 500; cntr++) { // 4000bytes x 8bit/bytes = 32,000 bit / 64 decimate = 500 int of data
+//			PCM_DAC_outBuffer[cntr] = (PCM_outBuffer[cntr] >> 4) + 2048; // convert to 12bit DC offset of DAC data
+//	  }
+//	  GPIOD->BSRR = (1 << (15 + 16)); // Reset
+//  }
+//  timerPeriodElapsedCallbk_cntr++;
+
+}
+
+void HAL_SPI_RxHalfCpltCallback(SPI_HandleTypeDef *hspi)
+{
+  /* Prevent unused argument(s) compilation warning */
+  UNUSED(hspi);
+
+  /* NOTE : This function should not be modified, when the callback is needed,
+            the HAL_SPI_RxHalfCpltCallback() should be implemented in the user file
+   */
+
+  	  GPIOD->BSRR = (1 << 14); // Set
+  	  // 2000bytes x 8bit/bytes = 16,000 bit / 64 decimate = 250 int of data
+  	  PDM_Filter(&SPI_PDM_rx_data_4k[0], &PCM_outBuffer[0], &PDM1_filter_handler);
+
+  	  for (int cntr = 0; cntr < 250; cntr++) { // 4000bytes x 8bit/bytes = 32,000 bit / 64 decimate = 500 int of data
+  		  // First 1/2 of received data goes to the second 1/2 of PCM output
+  		  PCM_DAC_outBuffer[cntr] = (PCM_outBuffer[cntr] >> 4) + 2048; // convert to 12bit DC offset of DAC data
+  	  }
+  	  GPIOD->BSRR = (1 << (14 + 16)); // Reset
+
 }
 
 /**
-  * @brief  Hall Trigger detection half complete callback in non-blocking mode
-  * @param  htim TIM handle
+  * @brief  Rx Transfer completed callback.
+  * @param  hspi pointer to a SPI_HandleTypeDef structure that contains
+  *               the configuration information for SPI module.
   * @retval None
   */
-void HAL_TIM_TriggerHalfCpltCallback(TIM_HandleTypeDef *htim)
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
 {
   /* Prevent unused argument(s) compilation warning */
-  UNUSED(htim);
+  UNUSED(hspi);
 
   /* NOTE : This function should not be modified, when the callback is needed,
-            the HAL_TIM_TriggerHalfCpltCallback could be implemented in the user file
+            the HAL_SPI_RxCpltCallback should be implemented in the user file
    */
 
+  	  GPIOD->BSRR = (1 << 15); // Set
+  	  // 2000bytes x 8bit/bytes = 16,000 bit / 64 decimate = 250 int of data
+  	  PDM_Filter(&SPI_PDM_rx_data_4k[2000], &PCM_outBuffer[250], &PDM1_filter_handler); // 2000bytes x 8bit/bytes = 16,000 bit / 64 decimate = 250 int of data
+
+  	  for (int cntr = 250; cntr < 500; cntr++) { // 4000bytes x 8bit/bytes = 32,000 bit / 64 decimate = 500 int of data
+  		  // Second 1/2 of received data goes to the next First 1/2 of PCM output
+  		  PCM_DAC_outBuffer[cntr] = (PCM_outBuffer[cntr] >> 4) + 2048; // convert to 12bit DC offset of DAC data
+  	  }
+  	  GPIOD->BSRR = (1 << (15 + 16)); // Reset
+
 }
+
+/**
+  * @brief  Rx Half Transfer completed callback.
+  * @param  hspi pointer to a SPI_HandleTypeDef structure that contains
+  *               the configuration information for SPI module.
+  * @retval None
+  */
 
 /* USER CODE END 4 */
 
